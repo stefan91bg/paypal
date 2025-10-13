@@ -1,5 +1,5 @@
 {
-  "key": "integration.paypal-reporter",
+  "key": "integration.paypal-reporter-free-trial",
   "name": "PayPal Report Link (Free Trial)",
   "description": "Generates PDF reports from Clockify time entries with a PayPal.me link.",
   "baseUrl": "https://repo-three-eosin.vercel.app",
