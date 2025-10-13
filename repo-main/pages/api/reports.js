@@ -1,9 +1,10 @@
-// report.js with dynamic invoice title including the client's name
+// report.js with Supabase trial logic using the 'installations' table
 
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
 import { verifyToken } from '../../lib/auth';
 import fs from 'fs';
 import path from 'path';
+import { supabase } from '../../lib/supabaseClient'; // Uvoz Supabase klijenta
 
 // Helper funkcije (ostaju iste)
 function addLinkAnnotation(page, x, y, width, height, url) { const ctx = page.node?.context || page.doc.context; const annotation = ctx.obj({ Type: PDFName.of("Annot"), Subtype: PDFName.of("Link"), Rect: ctx.obj([x, y, x + width, y + height]), Border: ctx.obj([0, 0, 0]), A: ctx.obj({ Type: PDFName.of("Action"), S: PDFName.of("URI"), URI: PDFString.of(url) }) }); let annots = page.node.lookup(PDFName.of("Annots")); if (!annots) { annots = ctx.obj([]); page.node.set(PDFName.of("Annots"), annots); } annots.push(annotation); }
@@ -33,6 +34,30 @@ export default async function handler(req, res) {
         const { workspaceId, reportsUrl, backendUrl } = decodedToken;
         
         const { start, end, USER_PAYPAL_LINK, billableFilter, projectFilter, clientFilter, clientName, clientAddress, taskFilter, descriptionFilter, withoutTask, withoutDescription, issueDate, dueDate, preview, columns: visibleColumns = { date: true, description: true, project: true, task: true } } = req.body;
+        
+        // --- FREE TRIAL LOGIC ---
+        // Ne proveravamo limit za preview, samo za finalni download
+        if (!preview) {
+            const { data, error } = await supabase
+                .from('installations') // <-- IZMENA: Koristimo 'installations' tabelu
+                .select('download_count')
+                .eq('workspace_id', workspaceId)
+                .single();
+
+            // Greška se dešava, ali to nije greška ako red ne postoji (PGRST116), 
+            // što je normalno za prvu instalaciju
+            if (error && error.code !== 'PGRST116') {
+                throw new Error(`Supabase error: ${error.message}`);
+            }
+
+            const currentCount = data ? data.download_count : 0;
+
+            if (currentCount >= 3) {
+                // Vraćamo status 403 (Forbidden) sa jasnom porukom
+                return res.status(403).json({ error: "Trial period has expired. Please purchase the premium version of PayPal Report Link." });
+            }
+        }
+        // -------------------------
 
         const workspaceResp = await fetch(`${backendUrl}/v1/workspaces/${workspaceId}`, { headers: { "X-Addon-Token": token } });
         if (!workspaceResp.ok) throw new Error(`Could not fetch workspace details. Status: ${workspaceResp.status}`);
@@ -173,13 +198,8 @@ export default async function handler(req, res) {
         }
         y -= 60 + addressYOffset;
         
-        // --- KLJUČNA IZMENA JE OVDE ---
-        // 1. Kreiramo dinamički naslov. Ako nema imena klijenta, koristimo podrazumevani naslov.
         const subjectText = clientName ? `Invoice for ${clientName}` : "Invoice for Time Report";
-        
         const subjectWidth = fontBold.widthOfTextAtSize(subjectText, 14);
-        
-        // 2. Koristimo dinamički naslov prilikom iscrtavanja
         drawText(page, subjectText, (PAGE_WIDTH - subjectWidth) / 2, y, { font: fontBold, size: 14 });
         y -= 40;
         
@@ -246,6 +266,21 @@ export default async function handler(req, res) {
         }
 
         const pdfBytes = await pdfDoc.save();
+
+        // --- FREE TRIAL LOGIC ---
+        // Povećavamo brojač SAMO nakon uspešnog generisanja PDF-a
+        if (!preview) {
+            const { error: rpcError } = await supabase.rpc('increment_download_count', {
+                id_of_workspace: workspaceId
+            });
+
+            if (rpcError) {
+                // Ako ne uspemo da povećamo brojač, nećemo zaustaviti korisnika,
+                // ali ćemo zabeležiti grešku za debagovanje.
+                console.error("Supabase RPC error:", rpcError.message);
+            }
+        }
+        // -------------------------
         
         const safeClientName = clientName ? clientName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '') : 'Report';
         
@@ -269,3 +304,4 @@ export default async function handler(req, res) {
         res.status(500).json({ error: "An unexpected error occurred while generating the report. Please try again." });
     }
 }
+
