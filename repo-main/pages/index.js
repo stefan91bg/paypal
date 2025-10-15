@@ -25,24 +25,43 @@ export default function Home() {
 
     useEffect(() => {
         if (!router.isReady) return;
-
         const tokenFromQuery = router.query.auth_token;
         const tokenFromStorage = sessionStorage.getItem('clockify_auth_token');
+        let currentToken = null;
 
         if (tokenFromQuery) {
             sessionStorage.setItem('clockify_auth_token', tokenFromQuery);
-            setAuthToken(tokenFromQuery);
+            currentToken = tokenFromQuery;
         } else if (tokenFromStorage) {
-            setAuthToken(tokenFromStorage);
+            currentToken = tokenFromStorage;
+        }
+        
+        if (currentToken) {
+            setAuthToken(currentToken);
+            
+            // --- KLJUČNA IZMENA: Pozivamo novi API da zabeleži instalaciju ---
+            const recordInstallation = async () => {
+                try {
+                    await fetch('/api/install', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${currentToken}` }
+                    });
+                    // Ne moramo ništa da radimo sa odgovorom, samo "pucamo i zaboravljamo"
+                } catch (err) {
+                    console.error("Failed to record installation:", err);
+                }
+            };
+            recordInstallation();
+            // -----------------------------------------------------------------
         }
     }, [router.isReady, router.query.auth_token]);
+
 
     useEffect(() => {
         if (!authToken) {
             setIsLoadingClients(false);
             return;
         }
-
         async function fetchClients() {
             setIsLoadingClients(true);
             try {
@@ -120,7 +139,7 @@ export default function Home() {
                 clientAddress: clientAddress || '',
                 issueDate: formatDate(issueDate), 
                 dueDate: isUponReceipt ? '' : formatDate(dueDate), 
-                auth_token: authToken 
+                auth_token: authToken
             },
         });
     };
@@ -228,7 +247,6 @@ export default function Home() {
                                         selectsStart
                                         startDate={start}
                                         endDate={end}
-                                        // IZMENA: Dodato autoComplete="off"
                                         autoComplete="off"
                                         required
                                     />
@@ -249,7 +267,6 @@ export default function Home() {
                                         startDate={start}
                                         endDate={end}
                                         minDate={start}
-                                        // IZMENA: Dodato autoComplete="off"
                                         autoComplete="off"
                                         required
                                     />
@@ -298,7 +315,6 @@ export default function Home() {
                                         dateFormat="MM-dd-yyyy"
                                         placeholderText="MM-DD-YYYY"
                                         className="date-picker-input"
-                                        // IZMENA: Dodato autoComplete="off"
                                         autoComplete="off"
                                         required
                                     />
@@ -316,7 +332,6 @@ export default function Home() {
                                         placeholderText={isUponReceipt ? "Upon receipt" : "MM-DD-YYYY"}
                                         className="date-picker-input"
                                         disabled={isUponReceipt}
-                                        // IZMENA: Dodato autoComplete="off"
                                         autoComplete="off"
                                     />
                                     <div className="icon-label"><CalendarIcon /></div>
