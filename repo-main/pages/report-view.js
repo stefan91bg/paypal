@@ -125,7 +125,8 @@ setPdfColumns(prev => ({ ...prev, [name]: checked }));
 const mapEntries = (entries, durationFmt) => {
 return entries.map((e) => {
 const durationSeconds = e.timeInterval?.duration ? (typeof e.timeInterval.duration === "number" ? e.timeInterval.duration : 0) : 0;
-const hourlyRate = e.rate != null ? `${(e.rate / 100).toFixed(2)} ${e.currency || ''}`.trim() : "N/A";
+// FIXED: Using string concatenation to prevent editor parsing issues
+const hourlyRate = e.rate != null ? (e.rate / 100).toFixed(2) + ' ' + (e.currency || '') : "N/A";
 return {
 description: e.description || "(No description)", project: e.projectName || "—", projectId: e.projectId || null, clientName: e.clientName || "No Client", clientId: e.clientId || null, task: e.taskName || "—", taskId: e.taskId || null, tags: e.tags || [],
 amountDisplay: formatAmountsMap(getAmountsMapFromEntry(e)),
@@ -133,7 +134,7 @@ amountsMap: getAmountsMapFromEntry(e),
 duration: formatDuration(durationSeconds, durationFmt),
 durationSeconds: durationSeconds,
 date: formatDate(e.timeInterval?.start),
-hourlyRate: hourlyRate,
+hourlyRate: hourlyRate.trim(),
 };
 });
 };
@@ -194,30 +195,50 @@ setFilteredEntries(mapped);
 finally { setIsApplyingFilters(false); }
 };
 
+// =========================================================
+// UPDATED handleDownload function with 403 error handling
+// =========================================================
 const handleDownload = async () => {
-setIsDownloading(true);
-try {
-const billableFilterValue = status === "billable" ? "billable" : "billable_and_nonbillable";
-const resp = await fetch("/api/reports", {
-method: "POST",
-headers: { "Content-Type": "application/json", "Authorization": `Bearer ${auth_token}` },
-body: JSON.stringify({
-start, end, billableFilter: billableFilterValue, projectFilter: selectedProjects,
-clientFilter: clientId, clientName, clientAddress, taskFilter: selectedTasks,
-descriptionFilter: descriptionFilter,
-withoutTask: withoutTask,
-withoutDescription: withoutDescription,
-USER_PAYPAL_LINK: paypal,
-issueDate, dueDate, preview: false, columns: pdfColumns
-}),
-});
-if (!resp.ok) throw new Error("Failed to generate PDF on the server.");
-const blob = await resp.blob();
-const url = window.URL.createObjectURL(blob);
-const a = document.createElement("a"); a.href = url; a.download = `report-${start}-to-${end}.pdf`; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
-} catch (err) { setError("Could not generate PDF. Please try again."); }
-finally { setIsDownloading(false); }
+    setIsDownloading(true);
+    try {
+        const billableFilterValue = status === "billable" ? "billable" : "billable_and_nonbillable";
+        const resp = await fetch("/api/reports", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${auth_token}` },
+            body: JSON.stringify({
+                start, end, billableFilter: billableFilterValue, projectFilter: selectedProjects,
+                clientFilter: clientId, clientName, clientAddress, taskFilter: selectedTasks,
+                descriptionFilter: descriptionFilter,
+                withoutTask: withoutTask,
+                withoutDescription: withoutDescription,
+                USER_PAYPAL_LINK: paypal,
+                issueDate, dueDate, preview: false, columns: pdfColumns
+            }),
+        });
+
+        if (resp.status === 403) {
+            // Handle the trial limit error message from the backend
+            const errorData = await resp.json();
+            throw new Error(errorData.error || "Trial limit reached. Please purchase the full version.");
+        }
+        
+        if (!resp.ok) {
+            throw new Error("Failed to generate PDF on the server.");
+        }
+        
+        // Success: Download the file
+        const blob = await resp.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = `report-${start}-to-${end}.pdf`; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); a.remove();
+        
+    } catch (err) { 
+        // Catch network errors and the thrown 403 message
+        setError(err.message || "Could not generate PDF. Please try again."); 
+    } finally { 
+        setIsDownloading(false); 
+    }
 };
+// =========================================================
 
 const handleClearFilters = () => {
 setSelectedProjects([]);
