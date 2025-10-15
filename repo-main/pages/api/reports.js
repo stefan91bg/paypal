@@ -1,10 +1,10 @@
-// report.js with Supabase trial logic using the 'installations' table
+// report.js sa Supabase trial logikom i detaljnim logovanjem grešaka.
 
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
 import { verifyToken } from '../../lib/auth';
 import fs from 'fs';
 import path from 'path';
-// NOTE: Make sure '../../lib/supabaseClient' exists and initializes the client
+// NOTE: Osigurajte da je '../../lib/supabaseClient' ispravno podešen sa SERVICE_ROLE_KEY
 import { supabase } from '../../lib/supabaseClient'; 
 
 // Helper funkcije (ostaju iste)
@@ -37,32 +37,37 @@ export default async function handler(req, res) {
         const { start, end, USER_PAYPAL_LINK, billableFilter, projectFilter, clientFilter, clientName, clientAddress, taskFilter, descriptionFilter, withoutTask, withoutDescription, issueDate, dueDate, preview, columns: visibleColumns = { date: true, description: true, project: true, task: true } } = req.body;
         
         // --- FREE TRIAL CHECK: Step 1 (Read and Check) ---
-        // We only check the limit if this is a final download request (not a preview)
         if (!preview) {
+            
+            // LOGOVANJE PRE ČITANJA
+            console.log(`[SUPABASE_DEBUG] Attempting READ for workspace: ${workspaceId}`);
+            
             const { data, error } = await supabase
                 .from('installations') 
                 .select('download_count')
                 .eq('workspace_id', workspaceId)
                 .single();
-
-            // PGRST116 means 'No rows found', which is fine for a first-time user.
-            if (error && error.code !== 'PGRST116') {
-                console.error("Supabase read error:", error.message);
-                // Fail fast if we can't check the limit securely
-                return res.status(500).json({ error: "Cannot check trial status. Please try again." });
-            }
+            
+            // LOGOVANJE GREŠKE ČITANJA
+            if (error && error.code !== 'PGRST116') {
+                console.error("[SUPABASE READ FAILED]", JSON.stringify(error, null, 2));
+                // Vraćamo 500 status klijentu ako je greška kritična
+                return res.status(500).json({ error: "Cannot check trial status due to database error." });
+            }
 
             const currentCount = data ? data.download_count : 0;
             const MAX_DOWNLOADS = 3;
+            
+            // LOGOVANJE TRENUTNOG BROJAČA
+            console.log(`[TRIAL STATUS] Workspace ${workspaceId} Current Count: ${currentCount}`);
 
             if (currentCount >= MAX_DOWNLOADS) {
-                // Return 403 Forbidden with the explicit message
+                // Vraćamo 403 status
                 return res.status(403).json({ error: `Trial period has expired. You have reached the limit of ${MAX_DOWNLOADS} downloads. Please purchase the premium version of PayPal Report Link.` });
             }
         }
         // -------------------------
 
-        // Fetch Clockify data and generate PDF (The rest of your existing logic)
         const workspaceResp = await fetch(`${backendUrl}/v1/workspaces/${workspaceId}`, { headers: { "X-Addon-Token": token } });
         if (!workspaceResp.ok) throw new Error(`Could not fetch workspace details. Status: ${workspaceResp.status}`);
         const workspaceData = await workspaceResp.json();
@@ -272,15 +277,18 @@ export default async function handler(req, res) {
         const pdfBytes = await pdfDoc.save();
 
         // --- FREE TRIAL INCREMENT: Step 2 (Increment) ---
-        // ONLY increment the counter if the PDF was generated successfully.
         if (!preview) {
+            
+            // LOGOVANJE PRE UPISA
+            console.log(`[SUPABASE_DEBUG] Attempting RPC increment for workspace: ${workspaceId}`);
+            
             const { error: rpcError } = await supabase.rpc('increment_download_count', {
                 id_of_workspace: workspaceId
             });
 
             if (rpcError) {
-                // Log the error but continue sending the PDF, as the download succeeded.
-                console.error("Supabase RPC error during increment:", rpcError.message);
+                // OVO JE KRITIČNO MESTO ZA LOGOVANJE!
+                console.error("[SUPABASE RPC FAILED]", JSON.stringify(rpcError, null, 2));
             }
         }
         // -------------------------
@@ -298,13 +306,12 @@ export default async function handler(req, res) {
         return res.send(Buffer.from(pdfBytes));
 
     } catch (err) {
-        console.error("API /reports error:", err.message);
+        console.error("API /reports general error:", err.message);
         
         if (err.message.includes("401") || err.message.toLowerCase().includes("token")) {
             return res.status(401).json({ error: "Your session has expired. Please refresh the page to continue." });
         }
         
-        // Use the message from the thrown error if available (e.g., from the 403 check)
         res.status(500).json({ error: err.message || "An unexpected error occurred while generating the report. Please try again." });
     }
 }
